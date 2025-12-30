@@ -2,71 +2,58 @@
 #include <WiFiManager.h>
 #include <Preferences.h>
 
-// --- CHAVES HARDCODED (Opcional) ---
-// Preencha aqui para forçar as chaves via código, ignorando o que foi salvo no WiFiManager.
-// Exemplo: #define FORCE_OPENAI_KEY "sk-proj-..."
-//#define FORCE_OPENAI_KEY "" 
-//#define FORCE_ELEVEN_KEY ""
-// Voice: "Rachel" (21m00Tcm4TlvDq8ikWAM) - Reliable female voice
-//#define FORCE_VOICE_ID ""
-// -----------------------------------
+// Hardcoded keys (optional - leave empty to use WiFiManager)
+#define FORCE_OPENAI_KEY ""
+#define FORCE_ELEVEN_KEY ""
+#define FORCE_VOICE_ID "21m00Tcm4TlvDq8ikWAM"
 
-Preferences preferences;
+Preferences prefs;
 
 void ConfigManager::begin() {
     loadConfig();
 
     WiFiManager wm;
+    WiFiManagerParameter p1("openai", "OpenAI Key", _openAIKey.c_str(), 100);
+    WiFiManagerParameter p2("eleven", "ElevenLabs Key", _elevenLabsKey.c_str(), 100);
+    WiFiManagerParameter p3("voice", "Voice ID", _voiceID.c_str(), 50);
 
-    // Custom parameters
-    WiFiManagerParameter custom_openai_key("openai", "OpenAI API Key", _openAIKey.c_str(), 100);
-    WiFiManagerParameter custom_elevenlabs_key("elevenlabs", "ElevenLabs API Key", _elevenLabsKey.c_str(), 100);
-    WiFiManagerParameter custom_voice_id("voiceid", "ElevenLabs Voice ID", _voiceID.c_str(), 50);
-
-    wm.addParameter(&custom_openai_key);
-    wm.addParameter(&custom_elevenlabs_key);
-    wm.addParameter(&custom_voice_id);
-
-    // If we want to force config portal on button press (handled effectively by main loop or setup logic depending on requirement)
-    // For now, autoConnect will try to connect or start portal if failed.
-    // To manually start: wm.startConfigPortal("AtomEcho_Setup");
+    wm.addParameter(&p1);
+    wm.addParameter(&p2);
+    wm.addParameter(&p3);
 
     wm.setSaveParamsCallback([&]() {
-        _openAIKey = custom_openai_key.getValue();
-        _elevenLabsKey = custom_elevenlabs_key.getValue();
-        _voiceID = custom_voice_id.getValue();
+        _openAIKey = p1.getValue();
+        _elevenLabsKey = p2.getValue();
+        _voiceID = p3.getValue();
         saveConfig();
-        Serial.println("Params saved");
     });
 
-    if (!wm.autoConnect("AtomEcho_Setup")) {
-        Serial.println("Failed to connect and hit timeout");
+    if (!wm.autoConnect("KORVO_Setup")) {
         ESP.restart();
     }
 
-    Serial.println("Connected to WiFi :)");
+    Serial.println("[WiFi] Connected");
 }
 
 void ConfigManager::loadConfig() {
-    preferences.begin("atomecho-cfg", true);
-    _openAIKey = preferences.getString("openai", "");
-    _elevenLabsKey = preferences.getString("eleven", "");
-    // Default Voice: "Rachel" (Female, American - works well with Turbo v2.5 for PT-BR)
-    _voiceID = preferences.getString("voice", "21m00Tcm4TlvDq8ikWAM"); 
-    preferences.end();
+    prefs.begin("korvo-cfg", true);
+    _openAIKey = prefs.getString("openai", "");
+    _elevenLabsKey = prefs.getString("eleven", "");
+    _voiceID = prefs.getString("voice", "21m00Tcm4TlvDq8ikWAM");
+    prefs.end();
 
-    // Sobrescreve se houver chaves hardcoded
-    if (String(FORCE_OPENAI_KEY) != "") _openAIKey = FORCE_OPENAI_KEY;
-    if (String(FORCE_ELEVEN_KEY) != "") _elevenLabsKey = FORCE_ELEVEN_KEY;
-    if (String(FORCE_VOICE_ID) != "") _voiceID = FORCE_VOICE_ID;
+    // Override with hardcoded if set
+    if (strlen(FORCE_OPENAI_KEY) > 0) _openAIKey = FORCE_OPENAI_KEY;
+    if (strlen(FORCE_ELEVEN_KEY) > 0) _elevenLabsKey = FORCE_ELEVEN_KEY;
+    if (strlen(FORCE_VOICE_ID) > 0) _voiceID = FORCE_VOICE_ID;
 }
 
 void ConfigManager::saveConfig() {
-    preferences.begin("atomecho-cfg", false);
-    preferences.putString("openai", _openAIKey);
-    preferences.putString("eleven", _elevenLabsKey);
-    preferences.putString("voice", _voiceID);
-    preferences.end();
+    prefs.begin("korvo-cfg", false);
+    prefs.putString("openai", _openAIKey);
+    prefs.putString("eleven", _elevenLabsKey);
+    prefs.putString("voice", _voiceID);
+    prefs.end();
 }
 
 String ConfigManager::getOpenAIKey() { return _openAIKey; }
@@ -74,10 +61,9 @@ String ConfigManager::getElevenLabsKey() { return _elevenLabsKey; }
 String ConfigManager::getVoiceID() { return _voiceID; }
 
 void ConfigManager::resetSettings() {
-     WiFiManager wm;
-     wm.resetSettings();
-     preferences.begin("atomecho-cfg", false);
-     preferences.clear();
-     preferences.end();
-     Serial.println("Settings reset");
+    WiFiManager wm;
+    wm.resetSettings();
+    prefs.begin("korvo-cfg", false);
+    prefs.clear();
+    prefs.end();
 }
