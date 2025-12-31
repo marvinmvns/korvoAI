@@ -222,7 +222,10 @@ void processPipeline(String text) {
 void setup() {
     WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
     Serial.begin(115200);
-    delay(100);
+    // Don't wait for Serial if not connected (standalone mode)
+    for(int i = 0; i < 20 && !Serial; i++) {
+        delay(50);
+    }
 
     ledManager.begin();
     ledManager.setState(LED_ERROR); // Temporary RED during init
