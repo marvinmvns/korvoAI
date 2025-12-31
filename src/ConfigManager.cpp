@@ -3,7 +3,8 @@
 #include <Preferences.h>
 
 // Hardcoded keys (optional - leave empty to use WiFiManager)
-
+#define FORCE_OPENAI_KEY ""
+#define FORCE_ELEVEN_KEY ""
 #define FORCE_VOICE_ID "21m00Tcm4TlvDq8ikWAM"
 
 Preferences prefs;
