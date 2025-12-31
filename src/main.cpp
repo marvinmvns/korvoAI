@@ -11,6 +11,7 @@
 #include <esp_wifi.h>
 #include "ConfigManager.h"
 #include "AudioManager.h"
+#include "LedManager.h"
 #include "TranscriptionClient.h"
 #include "LLMClient.h"
 #include "ElevenLabsStreamClient.h"
@@ -32,10 +33,10 @@ const size_t PLAYBACK_BUF_SIZE = 3 * 1024 * 1024;  // 3MB in PSRAM (4MB limit)
 
 // Anti-echo cooldown
 unsigned long cooldownUntil = 0;
-const unsigned long COOLDOWN_MS = 1500;  // Ignore mic for 1.5s after speaking
+const unsigned long COOLDOWN_MS = 300;  // Reduced to 300ms for faster turn-taking
 
-// LED
-CRGB leds[LED_COUNT];
+// LED Manager
+LedManager ledManager;
 
 // State machine
 enum AppState { STATE_IDLE, STATE_LISTENING, STATE_PROCESSING, STATE_SPEAKING };
@@ -51,47 +52,16 @@ KorvoButton lastBtn = BTN_NONE;
 unsigned long btnTime = 0;
 
 // ===========================================================================
-// LED Functions
-// ===========================================================================
-void setLed(uint32_t color) {
-    for (int i = 0; i < LED_COUNT; i++) {
-        leds[i] = CRGB((color >> 16) & 0xFF, (color >> 8) & 0xFF, color & 0xFF);
-    }
-    FastLED.show();
-}
-
-void animateLed() {
-    static uint8_t hue = 0;
-    if (currentState == STATE_LISTENING) {
-        // Cyan pulse
-        static uint8_t b = 128;
-        static int8_t d = 3;
-        b += d;
-        if (b >= 250 || b <= 30) d = -d;
-        for (int i = 0; i < LED_COUNT; i++) leds[i] = CRGB(0, b, b/2);
-    } else if (currentState == STATE_PROCESSING) {
-        // Orange pulse
-        static uint8_t b2 = 128;
-        static int8_t d2 = 4;
-        b2 += d2;
-        if (b2 >= 220 || b2 <= 60) d2 = -d2;
-        for (int i = 0; i < LED_COUNT; i++) leds[i] = CRGB(b2, b2/2, 0);
-    } else if (currentState == STATE_SPEAKING) {
-        // Rainbow
-        for (int i = 0; i < LED_COUNT; i++) leds[i] = CHSV(hue + i * 20, 255, 150);
-        hue += 2;
-    }
-    FastLED.show();
-}
-
-// ===========================================================================
 // Button Functions
 // ===========================================================================
 KorvoButton readButton() {
     int v = analogRead(BUTTON_ADC_PIN);
+    if (v >= BTN_SET_ADC_MIN && v <= BTN_SET_ADC_MAX) return BTN_SET;
+    if (v >= BTN_VOL_UP_ADC_MIN && v <= BTN_VOL_UP_ADC_MAX) return BTN_VOL_UP;
+    if (v >= BTN_VOL_DOWN_ADC_MIN && v <= BTN_VOL_DOWN_ADC_MAX) return BTN_VOL_DOWN;
     if (v >= BTN_PLAY_ADC_MIN && v <= BTN_PLAY_ADC_MAX) return BTN_PLAY;
-    if (v >= BTN_REC_ADC_MIN && v <= BTN_REC_ADC_MAX) return BTN_REC;
     if (v >= BTN_MODE_ADC_MIN && v <= BTN_MODE_ADC_MAX) return BTN_MODE;
+    if (v >= BTN_REC_ADC_MIN && v <= BTN_REC_ADC_MAX) return BTN_REC;
     return BTN_NONE;
 }
 
@@ -111,20 +81,48 @@ KorvoButton checkButton() {
 }
 
 // ===========================================================================
-// Audio Playback - PCM direct to I2S
+// Audio Playback - Optimized for Streaming
 // ===========================================================================
 void playAudio() {
-    if (!playbackBuffer || playbackBuffer->available() == 0) return;
+    if (!playbackBuffer) return;
 
-    int total = playbackBuffer->available();
-    Serial.printf("[Play] PCM %d bytes\n", total);
-
+    Serial.println("[Play] Start streaming");
+    
     uint8_t buf[2048];
+    unsigned long startTime = millis();
+    bool buffering = true;
 
-    while (playbackBuffer->available() > 0) {
+    while (isSpeaking || playbackBuffer->available() > 0) {
         size_t avail = playbackBuffer->available();
+        
+        // Initial buffering to prevent stutter (need at least 20KB to start)
+        if (buffering && avail < 20 * 1024 && isSpeaking) {
+            delay(10);
+            if (millis() - startTime > 5000) buffering = false; // Safety timeout
+            continue;
+        }
+        buffering = false;
+
+        if (avail == 0) {
+            if (!isSpeaking) break;
+            delay(5);
+            continue;
+        }
+
         size_t toRead = (avail > sizeof(buf)) ? sizeof(buf) : avail;
         playbackBuffer->read(buf, toRead);
+
+        // Calculate audio level for LED animation
+        int16_t* samples = (int16_t*)buf;
+        size_t sampleCount = toRead / 2;
+        int16_t maxVal = 0;
+        for (size_t i = 0; i < sampleCount; i += 8) { // Optimized check
+            int16_t val = abs(samples[i]);
+            if (val > maxVal) maxVal = val;
+        }
+        uint8_t ledLevel = map(constrain(maxVal, 0, 15000), 0, 15000, 0, 255);
+        ledManager.setAudioLevel(ledLevel);
+        ledManager.loop();
 
         size_t written = 0;
         i2s_write(I2S_NUM_0, buf, toRead, &written, portMAX_DELAY);
@@ -145,20 +143,20 @@ void playAudio() {
 void processPipeline(String text) {
     if (text.length() == 0) {
         currentState = STATE_IDLE;
-        setLed(0x00ff00);
+        ledManager.setState(LED_IDLE);
         return;
     }
 
     Serial.println("[User] " + text);
     currentState = STATE_PROCESSING;
-    setLed(0xff8800);
+    ledManager.setState(LED_PROCESSING);
 
     // Get LLM response
     String response = llmClient->chat(text);
     if (response.length() == 0) {
         Serial.println("[LLM] No response");
         currentState = STATE_IDLE;
-        setLed(0x00ff00);
+        ledManager.setState(LED_IDLE);
         return;
     }
 
@@ -167,7 +165,7 @@ void processPipeline(String text) {
     // Prepare for TTS
     isSpeaking = true;
     currentState = STATE_SPEAKING;
-    setLed(0xff00ff);
+    ledManager.setState(LED_SPEAKING);
 
     // Stop mic and disconnect WebSocket BEFORE TTS
     audioManager.stopMic();
@@ -178,36 +176,45 @@ void processPipeline(String text) {
     // Clear buffer
     playbackBuffer->clear();
 
-    // Stream TTS to buffer
+    // Task to play audio while it downloads
+    xTaskCreate([](void* p) {
+        playAudio();
+        vTaskDelete(NULL);
+    }, "play_task", 4096, NULL, 5, NULL);
+
+    // Stream TTS to buffer (now non-blocking to the player task)
     bool ok = ttsClient->speak(response, playbackBuffer);
+    
+    // Signal end of download
+    isSpeaking = false;
+
     if (!ok) {
         Serial.println("[TTS] Failed");
-    } else {
-        // Play audio
-        playAudio();
     }
 
-    // Cleanup - wait for audio to fully finish
-    delay(500);
+    // Wait for playback task to finish (isSpeaking is false, buffer will drain)
+    while (playbackBuffer->available() > 0) {
+        delay(50); // Check faster
+    }
 
-    // Set cooldown to ignore echo from speaker
+    // Quick Cleanup
+    delay(50); // Minimal settling time for speaker
     cooldownUntil = millis() + COOLDOWN_MS;
-
     pendingText = "";
     hasTranscription = false;
 
-    // Reconnect transcription
+    // Reconnect transcription IMMEDIATELY
     audioManager.startMic();
     if (transcriptionClient) {
+        // If already connected, this is a no-op or quick reset
         transcriptionClient->connect();
     }
 
-    isSpeaking = false;
     currentState = STATE_IDLE;
-    setLed(0x00ff00);
-
-    Serial.println("[Main] Ready (cooldown active)");
+    ledManager.setState(LED_IDLE);
+    Serial.println("[Main] Ready (fast turn-taking)");
 }
+
 
 // ===========================================================================
 // Setup
@@ -217,9 +224,8 @@ void setup() {
     Serial.begin(115200);
     delay(100);
 
-    FastLED.addLeds<WS2812, LED_PIN, GRB>(leds, LED_COUNT);
-    FastLED.setBrightness(50);
-    setLed(0xff0000);
+    ledManager.begin();
+    ledManager.setState(LED_ERROR); // Temporary RED during init
 
     Serial.println("\n=== KORVO Voice Assistant ===");
     Serial.printf("Heap: %d\n", ESP.getFreeHeap());
@@ -293,10 +299,10 @@ void setup() {
     Serial.println("Connecting...");
     if (transcriptionClient->connect()) {
         Serial.println("Ready!");
-        setLed(0x00ff00);
+        ledManager.setState(LED_IDLE);
     } else {
         Serial.println("Connection failed");
-        setLed(0xff0000);
+        ledManager.setState(LED_ERROR);
     }
 
     currentState = STATE_IDLE;
@@ -309,7 +315,7 @@ void setup() {
 void loop() {
     // Skip everything during playback
     if (isSpeaking) {
-        animateLed();
+        ledManager.loop(); // Keep animating during blocking playback calls if any
         delay(20);
         return;
     }
@@ -340,22 +346,28 @@ void loop() {
                     transcriptionClient->sendAudio(buf, r);
                 }
             }
-            animateLed();
             break;
 
         case STATE_PROCESSING:
         case STATE_SPEAKING:
-            animateLed();
             break;
     }
+
+    // Update LED animations based on current state
+    if (currentState == STATE_LISTENING) ledManager.setState(LED_LISTENING);
+    else if (currentState == STATE_PROCESSING) ledManager.setState(LED_PROCESSING);
+    else if (currentState == STATE_SPEAKING) ledManager.setState(LED_SPEAKING);
+    else ledManager.setState(LED_IDLE);
+
+    ledManager.loop();
 
     // Button handling
     KorvoButton btn = checkButton();
     if (btn == BTN_MODE && currentState == STATE_IDLE) {
         // Toggle mode or other action
-        setLed(0x0000ff);
+        ledManager.setState(LED_PROCESSING); // Visual feedback
         delay(200);
-        setLed(0x00ff00);
+        ledManager.setState(LED_IDLE);
     }
 
     // Small delay to prevent CPU hogging

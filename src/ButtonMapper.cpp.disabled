@@ -1,0 +1,52 @@
+#include <Arduino.h>
+#include "BoardConfig.h"
+
+// Configurações
+#define ANALOG_PIN BUTTON_ADC_PIN // Pega do seu BoardConfig.h (geralmente pino 39)
+#define NOISE_THRESHOLD 50        // Ignora pequenas flutuações
+
+int lastValue = -1;
+
+void setup() {
+    Serial.begin(115200);
+    delay(1000);
+
+    Serial.println("\n\n=============================================");
+    Serial.println("   KORVO / ATOM ECHO - MAPEADOR DE BOTOES");
+    Serial.println("=============================================");
+    Serial.printf("Lendo pino ADC: %d\n", ANALOG_PIN);
+    Serial.println("Instrucoes:");
+    Serial.println("1. Aperte e SEGURE um botao.");
+    Serial.println("2. Anote o valor 'Raw' que aparecer.");
+    Serial.println("3. Solte o botao.");
+    Serial.println("4. Repita para todos os botoes.");
+    Serial.println("=============================================\n");
+}
+
+void loop() {
+    // Lê o valor analógico (0 a 4095 no ESP32)
+    int rawValue = analogRead(ANALOG_PIN);
+
+    // O ESP32 geralmente fica em 4095 (3.3V) quando nenhum botão é apertado
+    // se for circuito pull-up. Se for pull-down, fica em 0.
+    // Vamos assumir pull-up (padrão Korvo), então filtramos o valor máximo.
+    
+    // Se o valor mudou significativamente (evita spam de ruido)
+    if (abs(rawValue - lastValue) > NOISE_THRESHOLD) {
+        
+        // Só mostra se não estiver em "repouso" (assumindo repouso > 4000)
+        // Se o seu ficar spamando 4095 ou 0, ajustaremos.
+        if (rawValue < 4000 && rawValue > 100) { 
+            Serial.printf("BOTÃO PRESSIONADO! Valor Raw: %d\n", rawValue);
+            delay(200); // Pequeno delay para facilitar a leitura
+        } else if (rawValue <= 100) {
+            // Caso algum botão jogue para o terra (GND)
+            Serial.printf("BOTÃO PRESSIONADO! Valor Raw: %d (GND)\n", rawValue);
+            delay(200);
+        }
+        
+        lastValue = rawValue;
+    }
+
+    delay(50);
+}

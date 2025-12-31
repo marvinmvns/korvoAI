@@ -46,19 +46,19 @@
 // ADC Buttons
 #define BUTTON_ADC_PIN              39
 
-// Button ADC Thresholds
-#define BTN_PLAY_ADC_MIN            0
-#define BTN_PLAY_ADC_MAX            300
-#define BTN_SET_ADC_MIN             700
-#define BTN_SET_ADC_MAX             1000
-#define BTN_VOL_DOWN_ADC_MIN        1300
-#define BTN_VOL_DOWN_ADC_MAX        1600
-#define BTN_VOL_UP_ADC_MIN          1900
-#define BTN_VOL_UP_ADC_MAX          2200
-#define BTN_MODE_ADC_MIN            2500
-#define BTN_MODE_ADC_MAX            2800
-#define BTN_REC_ADC_MIN             3100
-#define BTN_REC_ADC_MAX             3500
+// Button ADC Thresholds (Custom Mapped)
+#define BTN_SET_ADC_MIN             0
+#define BTN_SET_ADC_MAX             200
+#define BTN_VOL_UP_ADC_MIN          250
+#define BTN_VOL_UP_ADC_MAX          450
+#define BTN_VOL_DOWN_ADC_MIN        700
+#define BTN_VOL_DOWN_ADC_MAX        950
+#define BTN_PLAY_ADC_MIN            1600
+#define BTN_PLAY_ADC_MAX            2000
+#define BTN_MODE_ADC_MIN            2100
+#define BTN_MODE_ADC_MAX            2400
+#define BTN_REC_ADC_MIN             2600
+#define BTN_REC_ADC_MAX             2900
 
 // Button IDs
 enum KorvoButton {

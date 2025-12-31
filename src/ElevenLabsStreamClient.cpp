@@ -36,12 +36,12 @@ bool ElevenLabsStreamClient::speak(String text, AudioRingBuffer* outputBuffer) {
     client.setInsecure();
     client.setTimeout(30000);
 
-    String url = "/v1/text-to-speech/" + _voiceId + "/stream?output_format=pcm_24000";
+    String url = "/v1/text-to-speech/" + _voiceId + "/stream?output_format=pcm_24000&optimize_streaming_latency=4";
 
     // Build request
     DynamicJsonDocument doc(1024);
     doc["text"] = text;
-    doc["model_id"] = "eleven_flash_v2_5";
+    doc["model_id"] = "eleven_turbo_v2_5";
 
     JsonObject vs = doc.createNestedObject("voice_settings");
     vs["stability"] = 0.5;
